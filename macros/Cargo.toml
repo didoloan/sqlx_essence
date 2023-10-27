@@ -1,0 +1,16 @@
+[package]
+name = "macros"
+version = "0.1.0"
+edition = "2021"
+authors = ["Doyin <didoloan@gmail.com>"]
+description = "Helper macros for the compile time orm."
+license = "MIT OR Apache-2.0"
+
+[lib]
+proc-macro=true
+
+[dependencies]
+syn="2.0.38"
+quote = "1.0.33"
+proc-macro2 = "1.0.69"
+darling = "0.20.3"
