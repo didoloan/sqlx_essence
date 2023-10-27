@@ -5,6 +5,7 @@ edition = "2021"
 authors = ["Doyin <didoloan@gmail.com>"]
 description = "Testing."
 license = "MIT OR Apache-2.0"
+repository = "git@github.com:didoloan/sqlx_essence"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
