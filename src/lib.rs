@@ -1,4 +1,4 @@
-pub use macros::GenDBOperations;
+pub use essence_macros::GenDBOperations;
 pub use futures::stream::BoxStream;
 pub use futures::{StreamExt, TryStreamExt};
 
