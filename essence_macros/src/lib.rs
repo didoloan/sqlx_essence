@@ -26,14 +26,12 @@ impl OrmCreate for Vec<FieldOpts> {
     fn create_create_struct(&self, opts: &SqlOpts, att:&proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let ident = get_suffixed_ident(&opts.root, "Create");
         let db_ident = &opts.db;
-        let concerned_fields = self.iter().filter(|fld| !fld.noninit).collect::<Vec<&FieldOpts>>();
 
-        let idents = concerned_fields.iter().map(|f| f.name.to_owned()).collect::<Vec<Ident>>();
-        let types = concerned_fields.iter().map(|f| f.field_type.to_owned()).collect::<Vec<Type>>();
+        let (idents_str_pair, types):(Vec<(&Ident, &str)>,Vec<&Type>) = self.iter().filter(|fld| !fld.noninit).map(|fld| ((&fld.name, fld.db_col_name.as_str()), &fld.field_type)).unzip();
 
-        let keys_str = concerned_fields.iter().map(|x| x.db_col_name.as_str()).collect::<Vec<&str>>().join(",");
+        let (idents, keys_str):(Vec<&Ident>, Vec<&str>) = idents_str_pair.iter().map(|(x,y)| (*x,*y)).unzip();
 
-        let query = format!("INSERT INTO {}({}) VALUES ({});", opts.table, keys_str, vec!["?"; idents.len()].join(","));
+        let query = format!("INSERT INTO {}({}) VALUES ({});", opts.table, keys_str.join(","), vec!["?"; idents.len()].join(","));
 
         quote::quote!{
             #att
@@ -67,22 +65,18 @@ impl OrmCreate for Vec<FieldOpts> {
         let concerned_fields = self.iter().filter(|fld| fld.searchable).collect::<Vec<&FieldOpts>>();
 
         let retrieved_fields_str = self.iter().map(|x| if x.name.to_string() == x.db_col_name {x.db_col_name.clone()} else {format!("{} as {}", x.db_col_name, x.name.to_string())}).collect::<Vec<String>>().join(", ");
-
-        let idents = concerned_fields.iter().map(|f| f.name.to_owned()).collect::<Vec<Ident>>();
-        let types = concerned_fields.iter().map(|f| get_type_optioned(&f.field_type, f.bound, false)).collect::<Vec<Type>>();
+        let (idents, types):(Vec<&Ident>, Vec<Type>) = concerned_fields.iter().map(|&f| (&f.name, get_type_optioned(&f.field_type, f.bound, false))).unzip();
 
         let bounds_fields = concerned_fields.iter().filter(|x| x.bound).map(|x| x.to_owned()).collect::<Vec<&FieldOpts>>();
         let matches_fields = concerned_fields.iter().filter(|x| !x.bound).map(|x| x.to_owned()).collect::<Vec<&FieldOpts>>();
 
-        let bounds_field_ident = bounds_fields.iter().map(|x| x.name.clone()).collect::<Vec<Ident>>();
-        
-        let bounds_field_str = bounds_fields.iter().map(|x| x.db_col_name.clone()).collect::<Vec<String>>();
-        
-        let matches_field_ident = matches_fields.iter().map(|x| x.name.clone()).collect::<Vec<Ident>>();
-        
-        let matches_field_str = matches_fields.iter().map(|x| x.db_col_name.clone()).collect::<Vec<String>>();
-        
-        let mut query = format!("SELECT {} FROM ", retrieved_fields_str);
+        let (bounds_field_ident, bounds_field_str):(Vec<&Ident>, Vec<&str>) = bounds_fields.iter().map(|x| (&x.name, x.db_col_name.as_str())).unzip();
+
+        let (matches_field_ident, matches_field_str):(Vec<&Ident>, Vec<&str>) = matches_fields.iter().map(|x| (&x.name, x.db_col_name.as_str())).unzip();
+
+        let mut query = "SELECT ".to_string();
+        query.push_str(&retrieved_fields_str);
+        query.push_str(" FROM ");
         
         query.push_str(&opts.table);
         query.push_str(" WHERE ");
@@ -223,9 +217,7 @@ impl OrmCreate for Vec<FieldOpts> {
         let pk = &opts.pk;
         let concerned_fields = self.iter().filter(|fld| fld.updatable).collect::<Vec<&FieldOpts>>();
 
-        // let field_attr = concerned_fields.iter().map(|f| Type::Verbatim(())).collect::<Vec<>>();
-        let idents = concerned_fields.iter().map(|f| f.name.to_owned()).collect::<Vec<Ident>>();
-        let types = concerned_fields.iter().map(|f| get_type_optioned(&f.field_type, f.bound, true)).collect::<Vec<Type>>();
+        let (idents, types):(Vec<&Ident>, Vec<Type>) = concerned_fields.iter().map(|&f| (&f.name, get_type_optioned(&f.field_type, f.bound, false))).unzip();
 
         // let fields_str = idents.iter().map(|x| x.to_string()).collect::<Vec<String>>();
         let fields_str = concerned_fields.iter().map(|x| x.db_col_name.clone()).collect::<Vec<String>>();
@@ -280,7 +272,12 @@ pub fn gencrud(input:TokenStream) -> TokenStream {
 
     let root_ident = &ast.ident;
 
-    let TableOpts { name, driver, traits } = get_table_attributes(&ast);
+    let TableOpts { name, driver, traits } = match get_table_attributes(&ast) {
+        Ok(tbl_attr) => tbl_attr,
+        Err(e) => {
+            return e.write_errors().into();
+        }
+    };
     
     let derives_dtos_derives = traits.split(",").map(|x| Ident::new(x.trim(), Span::call_site())).collect::<Vec<Ident>>();
 
@@ -288,7 +285,19 @@ pub fn gencrud(input:TokenStream) -> TokenStream {
         #[derive(#(#derives_dtos_derives,)*)]
     };
 
-    let field_opts = get_fields(&ast).iter().map(field_to_opts).collect::<Vec<FieldOpts>>();
+    let mut field_opts = Vec::new();
+
+    for field in get_fields(&ast) {
+        match field_to_opts(&field) {
+            Ok(f_opts) => {
+                field_opts.push(f_opts);
+            },
+            Err(e) => {
+                return e.with_span(&field).write_errors().into();
+            }
+        }
+    }
+
     let retrieved_fields_str = field_opts.iter().map(|x| if x.name.to_string() == x.db_col_name {x.db_col_name.clone()} else {format!("{} as {}", x.db_col_name, x.name.to_string())}).collect::<Vec<String>>().join(", ");
     let pk = field_opts.iter().find(|x| x.pk).unwrap().db_col_name.clone();
     let sql_opts = SqlOpts::new(&name, &driver, &root_ident, &pk);

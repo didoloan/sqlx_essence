@@ -4,21 +4,18 @@ use proc_macro2::Span;
 use syn::{DeriveInput, Field, Ident, Type};
 use crate::models::{ColumnOpts, FieldOpts, TableOpts};
 
-pub fn field_to_opts(field:&Field) -> FieldOpts {
-    match ColumnOpts::from_field(field) {
-        Ok(val) => FieldOpts { 
-            pk: val.pk.unwrap_or(false),
-            updatable: val.updatable.unwrap_or(false),
-            searchable: val.searchable.unwrap_or(false),
-            bound: val.bound.unwrap_or(false),
-            noninit: val.noninit.unwrap_or(false),
-            name: field.clone().ident.unwrap(),
-            db_col_name: val.rename.unwrap_or(field.clone().ident.unwrap().to_string()),
-            field_type: field.clone().ty,
-            is_in: val.is_in.unwrap_or(false)
-        },
-        Err(_) => panic!("Couldn't parse field!")
-    }
+pub fn field_to_opts(field:&Field) -> Result<FieldOpts, darling::Error> {
+    ColumnOpts::from_field(field).map(|val| FieldOpts {
+        pk: val.pk.unwrap_or(false),
+        updatable: val.updatable.unwrap_or(false),
+        searchable: val.searchable.unwrap_or(false),
+        bound: val.bound.unwrap_or(false),
+        noninit: val.noninit.unwrap_or(false),
+        name: field.clone().ident.unwrap(),
+        db_col_name: val.rename.unwrap_or(field.clone().ident.unwrap().to_string()),
+        field_type: field.clone().ty,
+        is_in: val.is_in.unwrap_or(false)
+    })
 }
 
 pub fn get_fields(ast: &DeriveInput) -> Vec<Field> {
@@ -31,13 +28,8 @@ pub fn get_fields(ast: &DeriveInput) -> Vec<Field> {
     }
 }
 
-pub fn get_table_attributes(ast: &DeriveInput) -> TableOpts {
-    match FromDeriveInput::from_derive_input(ast) {
-        Ok(opts) => opts,
-        Err(_) => panic!(r"
-            Attributes not complete.
-        ")
-    }
+pub fn get_table_attributes(ast: &DeriveInput) -> Result<TableOpts, darling::Error> {
+    FromDeriveInput::from_derive_input(ast)
 }
 
 pub fn get_suffixed_ident(ident:&Ident, suffix: &str) -> Ident {
