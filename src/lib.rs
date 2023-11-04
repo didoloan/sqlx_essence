@@ -12,3 +12,7 @@ macro_rules! create_bound {
         }
     };
 }
+
+#[cfg(test)]
+mod mysql_crud_tests;
+

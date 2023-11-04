@@ -8,12 +8,16 @@ license = "MIT OR Apache-2.0"
 
 [workspace]
 members = [
-    "essence_macros",
-    "tests"
+    "essence_macros"
 ]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-essence_macros = { path="./essence_macros", version="0.1.0" }
+essence_macros = { path="./essence_macros", version="0.2.0" }
 serde = { version="1.0.189", features=["derive"] }
 futures = "0.3.28"
+tokio = { version="1.33.0", features=["test-util", "macros"] }
+sqlx = { version="0.7.2", features=["mysql", "postgres", "chrono", "runtime-tokio-rustls"] }
+chrono = { version="0.4.24", features=["serde"] }
+
+[dev-dependencies]

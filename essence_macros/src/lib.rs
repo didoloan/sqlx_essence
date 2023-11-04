@@ -42,14 +42,16 @@ impl OrmCreate for Vec<FieldOpts> {
             }
 
             impl #ident {
-                pub async fn insert(&self, conn:&Pool<#db_ident>) -> Result<u64, std::io::Error> {
-                    let mut query_res = sqlx::query(#query)
+                pub fn new(#(#idents:#types,)*) -> Self {
+                    Self {
+                        #(#idents,)*
+                    }
+                }
+
+                pub async fn insert(&self, conn:&Pool<#db_ident>) -> Result<u64, ::sqlx::Error> {
+                    sqlx::query(#query)
                     #(.bind(self.#idents.clone()))*
-                    .execute(conn).await;
-                    return match query_res {
-                        Ok(res) => Ok(res.last_insert_id()),
-                        Err(err) => Err(Error::new(ErrorKind::Other, err.to_string()))
-                    }        
+                    .execute(conn).await.map(|x| x.last_insert_id())
                 }
             }
         }
@@ -91,6 +93,12 @@ impl OrmCreate for Vec<FieldOpts> {
             }
 
             impl #ident {
+
+                pub fn new(#(#idents:#types,)*) -> Self {
+                    Self {
+                        #(#idents,)*
+                    }
+                }
 
                 pub fn get_query_args(&self) -> (String, #arguments_ident) {
                     let mut query_args:Vec<String> = Vec::new();
@@ -137,19 +145,19 @@ impl OrmCreate for Vec<FieldOpts> {
                         }
                     )*
     
-                    query_string.push_str(query_appendages.join(" AND ").as_str());
+                    query_string.push_str(&query_appendages.join(" AND "));
                     query_string.push_str(";");
                     (query_string, msql_args)
                 }
 
-                pub fn stream_search<'a>(&mut self, query:&'a str, args:#arguments_ident, conn: &'a Pool<#db_ident>) -> BoxStream<'a, Result<#root_ident, ::std::io::Error>> {
+                pub fn stream_search<'a>(&mut self, query:&'a str, args:#arguments_ident, conn: &'a Pool<#db_ident>) -> BoxStream<'a, Result<#root_ident, ::sqlx::Error>> {
                                         
-                    let call = sqlx::query_as_with::<#db_ident, #root_ident, #arguments_ident>(query, args).fetch(conn).map_err(|x| Error::new(ErrorKind::Other, x.to_string()));
+                    let call = sqlx::query_as_with::<#db_ident, #root_ident, #arguments_ident>(query, args).fetch(conn);
                     return call.boxed();
                     
                 }
 
-                pub async fn search(&mut self, conn: &Pool<#db_ident>) -> Result<Vec<#root_ident>, ::std::io::Error> {
+                pub async fn search(&mut self, conn: &Pool<#db_ident>) -> Result<Vec<#root_ident>, ::sqlx::Error> {
     
                     let mut query_args:Vec<String> = Vec::new();
                     let mut query_appendages:Vec<String> = Vec::new();
@@ -198,12 +206,7 @@ impl OrmCreate for Vec<FieldOpts> {
                     query_string.push_str(query_appendages.join(" AND ").as_str());
                     query_string.push_str(";");
                     
-                    let query_res = match sqlx::query_as_with::<#db_ident, #root_ident, #arguments_ident>(query_string.as_str(), msql_args).fetch_all(conn).await {
-                        Ok(res) => Ok(res),
-                        Err(err) => Err(Error::new(ErrorKind::Other, err.to_string()))
-                    };
-    
-                    query_res
+                    sqlx::query_as_with::<#db_ident, #root_ident, #arguments_ident>(query_string.as_str(), msql_args).fetch_all(conn).await
                 }
             }
         }
@@ -213,14 +216,13 @@ impl OrmCreate for Vec<FieldOpts> {
         let ident = get_suffixed_ident(&opts.root, "Update");
         let db_ident = &opts.db;
         let arguments_ident = &opts.arguments;
-        let table_name = &opts.table;
-        let pk = &opts.pk;
+        let table_name = opts.table;
+        let pk = opts.pk;
         let concerned_fields = self.iter().filter(|fld| fld.updatable).collect::<Vec<&FieldOpts>>();
 
-        let (idents, types):(Vec<&Ident>, Vec<Type>) = concerned_fields.iter().map(|&f| (&f.name, get_type_optioned(&f.field_type, f.bound, false))).unzip();
+        let (idents_and_strrep, types):(Vec<(&Ident, &str)>, Vec<Type>) = concerned_fields.iter().map(|&f| ((&f.name, f.db_col_name.as_str()), get_type_optioned(&f.field_type, true, true))).unzip();
 
-        // let fields_str = idents.iter().map(|x| x.to_string()).collect::<Vec<String>>();
-        let fields_str = concerned_fields.iter().map(|x| x.db_col_name.clone()).collect::<Vec<String>>();
+        let (idents, fields_str):(Vec<&Ident>, Vec<&str>) = idents_and_strrep.iter().map(|(x,y)| (*x,*y)).unzip();
 
         let mut query_str = "UPDATE ".to_string();
 
@@ -237,7 +239,13 @@ impl OrmCreate for Vec<FieldOpts> {
             }
 
             impl #ident {
-                pub async fn update(&self, pk:u64, conn:&Pool<#db_ident>) -> Result<u64, std::io::Error> {
+                pub fn new(#(#idents:#types,)*) -> Self {
+                    Self {
+                        #(#idents,)*
+                    }
+                }
+
+                pub async fn update(&self, pk:u64, conn:&Pool<#db_ident>) -> Result<u64, ::sqlx::Error> {
                     let mut query_string = #query_str.to_string();
                     let mut msql_args = #arguments_ident::default();
                     
@@ -253,12 +261,8 @@ impl OrmCreate for Vec<FieldOpts> {
                     query_string.push_str(#suffix);
                     msql_args.add(pk);
                     
-                    let mut query_res = sqlx::query_with(query_string.as_str(), msql_args)
-                    .execute(conn).await;
-                    return match query_res {
-                        Ok(res) => Ok(res.rows_affected()),
-                        Err(err) => Err(Error::new(ErrorKind::Other, err.to_string()))
-                    }
+                    sqlx::query_with(query_string.as_str(), msql_args)
+                    .execute(conn).await.map(|res| res.rows_affected())
                 }
             }
         }
@@ -272,12 +276,14 @@ pub fn gencrud(input:TokenStream) -> TokenStream {
 
     let root_ident = &ast.ident;
 
-    let TableOpts { name, driver, traits } = match get_table_attributes(&ast) {
+    let TableOpts { name, driver, mut traits } = match get_table_attributes(&ast) {
         Ok(tbl_attr) => tbl_attr,
         Err(e) => {
             return e.write_errors().into();
         }
     };
+
+    traits.push_str(", Default, Debug");
     
     let derives_dtos_derives = traits.split(",").map(|x| Ident::new(x.trim(), Span::call_site())).collect::<Vec<Ident>>();
 
@@ -313,21 +319,19 @@ pub fn gencrud(input:TokenStream) -> TokenStream {
     let res_tstrm = quote::quote!{
 
         impl #root_ident {
-            pub async fn get_by_pk(pk: u64, conn:&Pool<#db_ident>) -> Result<Option<Self>, ::std::io::Error> {
-                
+            pub async fn get_by_pk(pk: u64, conn:&Pool<#db_ident>) -> Result<Option<Self>, ::sqlx::Error> {                
                 match sqlx::query_as::<#db_ident, #root_ident>(#by_pk_query).bind(pk).fetch_one(conn).await {
                     Ok(val) => Ok(Some(val)),
                     Err(e) => match e {
                         NotFound => Ok(None),
-                        _ => Err(Error::new(ErrorKind::Other, e.to_string()))
+                        _ => Err(e)
                     }
                 }
             }
 
-            pub async fn delete(pk: u64, conn:&Pool<#db_ident>) -> Result<u64, ::std::io::Error> {
+            pub async fn delete(pk: u64, conn:&Pool<#db_ident>) -> Result<u64, ::sqlx::Error> {
                 sqlx::query(#delete_query).bind(pk).execute(conn).await
                 .map(|x| x.rows_affected())
-                .map_err(|e| Error::new(ErrorKind::Other, e.to_string()))
             }
         }
         
