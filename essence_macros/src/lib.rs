@@ -27,11 +27,17 @@ impl OrmCreate for Vec<FieldOpts> {
         let ident = get_suffixed_ident(&opts.root, "Create");
         let db_ident = &opts.db;
 
+        
         let (idents_str_pair, types):(Vec<(&Ident, &str)>,Vec<&Type>) = self.iter().filter(|fld| !fld.noninit).map(|fld| ((&fld.name, fld.db_col_name.as_str()), &fld.field_type)).unzip();
-
+        
         let (idents, keys_str):(Vec<&Ident>, Vec<&str>) = idents_str_pair.iter().map(|(x,y)| (*x,*y)).unzip();
-
-        let query = format!("INSERT INTO {}({}) VALUES ({});", opts.table, keys_str.join(","), vec!["?"; idents.len()].join(","));
+        
+        let pos_args = match opts.db.to_string().as_str() {
+            "MySql" => vec!["?"; idents.len()].join(","),
+            "Postgres" => (1..idents.len()+1).map(|x| format!("${}", x)).collect::<Vec<_>>().join(", "),
+            _ => panic!("Unsupportted SQL flavour")
+        };
+        let query = format!("INSERT INTO {}({}) VALUES ({});", opts.table, keys_str.join(","), pos_args);
 
         quote::quote!{
             #att
@@ -69,12 +75,9 @@ impl OrmCreate for Vec<FieldOpts> {
         let retrieved_fields_str = self.iter().map(|x| if x.name.to_string() == x.db_col_name {x.db_col_name.clone()} else {format!("{} as {}", x.db_col_name, x.name.to_string())}).collect::<Vec<String>>().join(", ");
         let (idents, types):(Vec<&Ident>, Vec<Type>) = concerned_fields.iter().map(|&f| (&f.name, get_type_optioned(&f.field_type, f.bound, false))).unzip();
 
-        let bounds_fields = concerned_fields.iter().filter(|x| x.bound).map(|x| x.to_owned()).collect::<Vec<&FieldOpts>>();
-        let matches_fields = concerned_fields.iter().filter(|x| !x.bound).map(|x| x.to_owned()).collect::<Vec<&FieldOpts>>();
+        let (bounds_field_ident, bounds_field_str):(Vec<&Ident>, Vec<&str>) = concerned_fields.iter().filter(|x| x.bound).map(|x| x.to_owned()).map(|x| (&x.name, x.db_col_name.as_str())).unzip();
 
-        let (bounds_field_ident, bounds_field_str):(Vec<&Ident>, Vec<&str>) = bounds_fields.iter().map(|x| (&x.name, x.db_col_name.as_str())).unzip();
-
-        let (matches_field_ident, matches_field_str):(Vec<&Ident>, Vec<&str>) = matches_fields.iter().map(|x| (&x.name, x.db_col_name.as_str())).unzip();
+        let (matches_field_ident, matches_field_str):(Vec<&Ident>, Vec<&str>) = concerned_fields.iter().filter(|x| !x.bound).map(|x| x.to_owned()).map(|x| (&x.name, x.db_col_name.as_str())).unzip();
 
         let mut query = "SELECT ".to_string();
         query.push_str(&retrieved_fields_str);
@@ -82,6 +85,15 @@ impl OrmCreate for Vec<FieldOpts> {
         
         query.push_str(&opts.table);
         query.push_str(" WHERE ");
+
+        let pos_arg = match opts.db.to_string().as_str() {
+            "MySql" => "?",
+            "Postgres" => "#",
+            _ => panic!("Unsupportted SQL flavour")
+        };
+
+        let binding = opts.db.to_string();
+        let engine = binding.as_str();
 
         quote::quote!{
 
@@ -117,7 +129,8 @@ impl OrmCreate for Vec<FieldOpts> {
                             msql_args.add(val);
                             let mut appendage = String::from("");
                             appendage.push_str(#matches_field_str);
-                            appendage.push_str(" = ?");
+                            appendage.push_str(" = ");
+                            appendage.push_str(#pos_arg);
                             query_appendages.push(appendage);
                         }
                     )*
@@ -130,21 +143,27 @@ impl OrmCreate for Vec<FieldOpts> {
     
                                 let mut appendage = String::from("(");
                                 appendage.push_str(#bounds_field_str);
-                                appendage.push_str(" BETWEEN ? AND ?)");
+                                appendage.push_str(" BETWEEN ");
+                                appendage.push_str(#pos_arg);
+                                appendage.push_str(" AND ");
+                                appendage.push_str(#pos_arg);
+                                appendage.push_str(")");
                                 query_appendages.push(appendage);
                             }
                             if val.min.is_none() && val.max.is_some() {
                                 msql_args.add(val.max.unwrap());
                                 let mut appendage = String::from("");
                                 appendage.push_str(#bounds_field_str);
-                                appendage.push_str(" <= ?");
+                                appendage.push_str(" <= ");
+                                appendage.push_str(#pos_arg);
                                 query_appendages.push(appendage);
                             }
                             if val.min.is_some() && val.max.is_none() {
                                 msql_args.add(val.min.unwrap());
                                 let mut appendage = String::from("");
                                 appendage.push_str(#bounds_field_str);
-                                appendage.push_str(" >= ?");
+                                appendage.push_str(" >= ");
+                                appendage.push_str(#pos_arg);
                                 query_appendages.push(appendage);
                             }
                         }
@@ -152,12 +171,21 @@ impl OrmCreate for Vec<FieldOpts> {
     
                     query_string.push_str(&query_appendages.join(" AND "));
                     query_string.push_str(";");
+
+                    if #engine == "Postgres" {
+                        let pos_ins_index = query_string.chars().enumerate().filter(|x| ['?', '#'].contains(&x.1)).enumerate().map(|x| (x.0, x.1.0+1)).collect::<Vec<_>>();
+                        let mut count = 0;
+                        for pair in pos_ins_index {
+                            query_string.insert_str(pair.1+count, pair.0.to_string().as_str());
+                            count += 1;
+                        }
+                    }
                     (query_string, msql_args)
                 }
 
                 /**
                  * Returns a fallible stream of data from the database.
-                 * 
+                 * Call get_query_args to get the required arguments query and query_args
                  */
                 pub fn stream_search<'a>(&mut self, query:&'a str, args:#arguments_ident, conn: &'a Pool<#db_ident>) -> BoxStream<'a, Result<#root_ident, ::sqlx::Error>> {    
                     
@@ -178,7 +206,8 @@ impl OrmCreate for Vec<FieldOpts> {
                             msql_args.add(val);
                             let mut appendage = String::from("");
                             appendage.push_str(#matches_field_str);
-                            appendage.push_str(" = ?");
+                            appendage.push_str(" = ");
+                            appendage.push_str(#pos_arg);
                             query_appendages.push(appendage);
                         }
                     )*
@@ -191,48 +220,31 @@ impl OrmCreate for Vec<FieldOpts> {
                                     msql_args.add(max);        
                                     let mut appendage = String::from("(");
                                     appendage.push_str(#bounds_field_str);
-                                    appendage.push_str(" BETWEEN ? AND ?)");
+                                    appendage.push_str(" BETWEEN ");
+                                    appendage.push_str(#pos_arg);
+                                    appendage.push_str(" AND ");
+                                    appendage.push_str(#pos_arg);
+                                    appendage.push_str(")");
                                     query_appendages.push(appendage);
                                 },
                                 (Some(min), None) => {
                                     msql_args.add(min);
                                     let mut appendage = String::from("");
                                     appendage.push_str(#bounds_field_str);
-                                    appendage.push_str(" >= ?");
+                                    appendage.push_str(" >= ");
+                                    appendage.push_str(#pos_arg);
                                     query_appendages.push(appendage);
                                 },
                                 (None, Some(max)) => {
                                     msql_args.add(max);
                                     let mut appendage = String::from("");
                                     appendage.push_str(#bounds_field_str);
-                                    appendage.push_str(" <= ?");
+                                    appendage.push_str(" <= ");
+                                    appendage.push_str(#pos_arg);
                                     query_appendages.push(appendage);
                                 },
                                 _ => {}
                             }
-                            // if val.min.is_some() && val.max.is_some() {
-                            //     msql_args.add(val.min.unwrap());
-                            //     msql_args.add(val.max.unwrap());
-    
-                            //     let mut appendage = String::from("(");
-                            //     appendage.push_str(#bounds_field_str);
-                            //     appendage.push_str(" BETWEEN ? AND ?)");
-                            //     query_appendages.push(appendage);
-                            // }
-                            // if val.min.is_none() && val.max.is_some() {
-                            //     msql_args.add(val.max.unwrap());
-                            //     let mut appendage = String::from("");
-                            //     appendage.push_str(#bounds_field_str);
-                            //     appendage.push_str(" <= ?");
-                            //     query_appendages.push(appendage);
-                            // }
-                            // if val.min.is_some() && val.max.is_none() {
-                            //     msql_args.add(val.min.unwrap());
-                            //     let mut appendage = String::from("");
-                            //     appendage.push_str(#bounds_field_str);
-                            //     appendage.push_str(" >= ?");
-                            //     query_appendages.push(appendage);
-                            // }
                         }
                     )*
     
@@ -259,9 +271,18 @@ impl OrmCreate for Vec<FieldOpts> {
 
         let mut query_str = "UPDATE ".to_string();
 
+        let pos_arg = match opts.db.to_string().as_str() {
+            "MySql" => "?",
+            "Postgres" => "#",
+            _ => panic!("Unsupportted SQL flavour")
+        };
+
+        let binding = opts.db.to_string();
+        let engine = binding.as_str();
+
         query_str.push_str(table_name);
         query_str.push_str(" SET ");
-        let suffix = format!(" WHERE {} = ?;", pk);
+        let suffix = format!(" WHERE {} = {};", pk, pos_arg);
 
         quote::quote!{
             #att
@@ -285,7 +306,9 @@ impl OrmCreate for Vec<FieldOpts> {
                     #(
                         if let Some(val) = &self.#idents {
                             query_string.push_str(#fields_str);
-                            query_string.push_str("= ?, ");
+                            query_string.push_str("= ");
+                            query_string.push_str(#pos_arg);
+                            query_string.push_str(", ");
                             msql_args.add(val);
                         }
                     )*
@@ -293,6 +316,18 @@ impl OrmCreate for Vec<FieldOpts> {
                     query_string.pop();
                     query_string.push_str(#suffix);
                     msql_args.add(pk);
+
+                    
+                    if #engine == "Postgres" {
+                        let pos_ins_index = query_string.chars().enumerate().filter(|x| ['?', '#'].contains(&x.1)).enumerate().map(|x| (x.0, x.1.0+1)).collect::<Vec<_>>();
+                        let mut count = 0;
+                        for pair in pos_ins_index {
+                            query_string.insert_str(pair.1+count, pair.0.to_string().as_str());
+                            count += 1;
+                        }
+                    }
+
+                    println!("{}", query_string);
                     
                     sqlx::query_with(query_string.as_str(), msql_args)
                     .execute(conn).await.map(|res| res.rows_affected())
@@ -346,8 +381,14 @@ pub fn gencrud(input:TokenStream) -> TokenStream {
     let search = field_opts.create_search_struct(&sql_opts, &derives_dtos_attr);
     let update = field_opts.create_update_struct(&sql_opts, &derives_dtos_attr);
 
-    let by_pk_query = format!("SELECT {} FROM {} WHERE {}=?;", &retrieved_fields_str, &name, &pk);
-    let delete_query = format!("DELETE FROM {} WHERE {}=?;", &name, &pk);
+    let pos_arg = match driver.to_string().as_str() {
+        "MySql" => "?",
+        "Postgres" => "#1",
+        _ => panic!("Unsupportted SQL flavour")
+    };
+
+    let by_pk_query = format!("SELECT {} FROM {} WHERE {}={};", &retrieved_fields_str, &name, &pk, pos_arg);
+    let delete_query = format!("DELETE FROM {} WHERE {}={};", &name, &pk, pos_arg);
 
     let res_tstrm = quote::quote!{
 
