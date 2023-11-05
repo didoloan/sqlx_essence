@@ -99,7 +99,12 @@ impl OrmCreate for Vec<FieldOpts> {
                         #(#idents,)*
                     }
                 }
-
+                
+                /**
+                 * This function should be called before stream search to get the 
+                 * needed query and arguments.
+                 * Necessary to avoid reference error
+                 */
                 pub fn get_query_args(&self) -> (String, #arguments_ident) {
                     let mut query_args:Vec<String> = Vec::new();
                     let mut query_appendages:Vec<String> = Vec::new();
@@ -150,11 +155,14 @@ impl OrmCreate for Vec<FieldOpts> {
                     (query_string, msql_args)
                 }
 
-                pub fn stream_search<'a>(&mut self, query:&'a str, args:#arguments_ident, conn: &'a Pool<#db_ident>) -> BoxStream<'a, Result<#root_ident, ::sqlx::Error>> {
-                                        
-                    let call = sqlx::query_as_with::<#db_ident, #root_ident, #arguments_ident>(query, args).fetch(conn);
-                    return call.boxed();
+                /**
+                 * Returns a fallible stream of data from the database.
+                 * 
+                 */
+                pub fn stream_search<'a>(&mut self, query:&'a str, args:#arguments_ident, conn: &'a Pool<#db_ident>) -> BoxStream<'a, Result<#root_ident, ::sqlx::Error>> {    
                     
+                    let call = sqlx::query_as_with::<#db_ident, #root_ident, #arguments_ident>(query, args).fetch(conn);
+                    return call.boxed();                    
                 }
 
                 pub async fn search(&mut self, conn: &Pool<#db_ident>) -> Result<Vec<#root_ident>, ::sqlx::Error> {
@@ -177,29 +185,54 @@ impl OrmCreate for Vec<FieldOpts> {
     
                     #(
                         if let Some(val) = &self.#bounds_field_ident {
-                            if val.min.is_some() && val.max.is_some() {
-                                msql_args.add(val.min.unwrap());
-                                msql_args.add(val.max.unwrap());
+                            match (val.min, val.max) {
+                                (Some(min), Some(max)) => {
+                                    msql_args.add(min);
+                                    msql_args.add(max);        
+                                    let mut appendage = String::from("(");
+                                    appendage.push_str(#bounds_field_str);
+                                    appendage.push_str(" BETWEEN ? AND ?)");
+                                    query_appendages.push(appendage);
+                                },
+                                (Some(min), None) => {
+                                    msql_args.add(min);
+                                    let mut appendage = String::from("");
+                                    appendage.push_str(#bounds_field_str);
+                                    appendage.push_str(" >= ?");
+                                    query_appendages.push(appendage);
+                                },
+                                (None, Some(max)) => {
+                                    msql_args.add(max);
+                                    let mut appendage = String::from("");
+                                    appendage.push_str(#bounds_field_str);
+                                    appendage.push_str(" <= ?");
+                                    query_appendages.push(appendage);
+                                },
+                                _ => {}
+                            }
+                            // if val.min.is_some() && val.max.is_some() {
+                            //     msql_args.add(val.min.unwrap());
+                            //     msql_args.add(val.max.unwrap());
     
-                                let mut appendage = String::from("(");
-                                appendage.push_str(#bounds_field_str);
-                                appendage.push_str(" BETWEEN ? AND ?)");
-                                query_appendages.push(appendage);
-                            }
-                            if val.min.is_none() && val.max.is_some() {
-                                msql_args.add(val.max.unwrap());
-                                let mut appendage = String::from("");
-                                appendage.push_str(#bounds_field_str);
-                                appendage.push_str(" <= ?");
-                                query_appendages.push(appendage);
-                            }
-                            if val.min.is_some() && val.max.is_none() {
-                                msql_args.add(val.min.unwrap());
-                                let mut appendage = String::from("");
-                                appendage.push_str(#bounds_field_str);
-                                appendage.push_str(" >= ?");
-                                query_appendages.push(appendage);
-                            }
+                            //     let mut appendage = String::from("(");
+                            //     appendage.push_str(#bounds_field_str);
+                            //     appendage.push_str(" BETWEEN ? AND ?)");
+                            //     query_appendages.push(appendage);
+                            // }
+                            // if val.min.is_none() && val.max.is_some() {
+                            //     msql_args.add(val.max.unwrap());
+                            //     let mut appendage = String::from("");
+                            //     appendage.push_str(#bounds_field_str);
+                            //     appendage.push_str(" <= ?");
+                            //     query_appendages.push(appendage);
+                            // }
+                            // if val.min.is_some() && val.max.is_none() {
+                            //     msql_args.add(val.min.unwrap());
+                            //     let mut appendage = String::from("");
+                            //     appendage.push_str(#bounds_field_str);
+                            //     appendage.push_str(" >= ?");
+                            //     query_appendages.push(appendage);
+                            // }
                         }
                     )*
     

@@ -10,16 +10,16 @@ use std::default::Default;
 use tokio;
 
 
-create_bound!(Debug, Default, Deserialize, Serialize);
+create_bound!(Deserialize, Serialize);
 
 macro_rules! create_connection {
     () => {
-        let conn = match prepare_connection().await {
+        match prepare_connection::<MySql>().await {
             Ok(cn) => cn,
             Err(_) => {
                 panic!("Couldn't create connection");
             }
-        };
+        }
     };
 }
 
@@ -51,12 +51,7 @@ async fn prepare_connection<DB: sqlx::Database>() -> Result<Pool<DB>, ::sqlx::Er
 
 #[tokio::test]
 async fn test_create() {
-    let conn = match prepare_connection().await {
-        Ok(cn) => cn,
-        Err(_) => {
-            panic!("Couldn't create connection");
-        }
-    };
+    let conn = create_connection!();
 
     let new_user = UserCreate::new(
         "sevDev".into(),
@@ -72,12 +67,7 @@ async fn test_create() {
 
 #[tokio::test]
 async fn test_search() {
-    let conn = match prepare_connection::<MySql>().await {
-        Ok(cn) => cn,
-        Err(_) => {
-            panic!("Couldn't create connection");
-        }
-    };
+    let conn = create_connection!();
 
     let search_res = UserSearch::new(
         Some(Bound {
@@ -95,13 +85,33 @@ async fn test_search() {
 }
 
 #[tokio::test]
+async fn test_search_stream() {
+    let conn = create_connection!();
+
+    let mut search = UserSearch::new(
+        Some(Bound {
+            min: Some(1),
+            max: Some(5),
+        }),
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    
+    let (query, args) = search.get_query_args();
+
+    let stream = search.stream_search(&query, args, &conn);
+
+    let users_res = stream.try_collect::<Vec<_>>().await;
+
+    assert_eq!(users_res.is_ok(), true);
+}
+
+#[tokio::test]
 async fn test_by_pk() {
-    let conn = match prepare_connection::<MySql>().await {
-        Ok(cn) => cn,
-        Err(_) => {
-            panic!("Couldn't create connection");
-        }
-    };
+    let conn = create_connection!();
 
     let search_res = User::get_by_pk(8, &conn).await;
 
@@ -111,12 +121,7 @@ async fn test_by_pk() {
 
 #[tokio::test]
 async fn test_update() {
-    let conn = match prepare_connection::<MySql>().await {
-        Ok(cn) => cn,
-        Err(_) => {
-            panic!("Couldn't create connection");
-        }
-    };
+    let conn = create_connection!();
 
     let search_res = UserUpdate::new(Some("Updated Name".into()), None, None, None)
     .update(8, &conn).await;

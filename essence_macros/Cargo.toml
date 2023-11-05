@@ -5,6 +5,7 @@ edition = "2021"
 authors = ["Doyin <didoloan@gmail.com>"]
 description = "Helper macros for the compile time orm."
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/didoloan/sqlx_essence"
 
 [lib]
 proc-macro=true
