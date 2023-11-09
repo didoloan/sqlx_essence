@@ -13,6 +13,7 @@ pub struct TableOpts {
 pub struct SqlOpts<'a> {
     pub table: &'a str,
     pub arguments: Ident,
+    pub query_res: Ident,
     pub db: Ident,
     pub root: &'a Ident,
     pub pk: &'a str
@@ -21,12 +22,12 @@ pub struct SqlOpts<'a> {
 impl<'a> SqlOpts<'a> {
     pub fn new(table: &'a str, driver: &'a str, root: &'a Ident, pk: &'a str) -> Self {
 
-        let ags = match driver {
+        let (ags, q_res) = match driver {
             "MySql"|"MsSql"|"Sqlite" => {
-                [driver, "Arguments"].concat()
+                ([driver, "Arguments"].concat(), [driver, "QueryResult"].concat())
             },
             "Postgres" => {
-                ["Pg", "Arguments"].concat()
+                (["Pg", "Arguments"].concat(), ["Pg", "QueryResult"].concat())
             },
             _ => panic!("Unsupported database!")
         };
@@ -36,6 +37,7 @@ impl<'a> SqlOpts<'a> {
             pk,
             table,
             arguments: Ident::new(&ags, Span::call_site()),
+            query_res: Ident::new(&q_res, Span::call_site()),
             db: Ident::new(driver, Span::call_site())
         }
     }
