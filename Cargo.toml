@@ -1,6 +1,6 @@
 [package]
 name = "sqlx_essence"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 authors = ["Doyin <didoloan@gmail.com>"]
 description = "A compile time ORM for rust built around SQLx."
@@ -14,7 +14,7 @@ members = [
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-essence_macros = { path="./essence_macros", version="0.2.0" } 
+essence_macros = { path="./essence_macros", version="0.2.1" } 
 serde = { version="1.0.189", features=["derive"] }
 futures = "0.3.28"
 tokio = { version="1.33.0", features=["test-util", "macros"] } 
